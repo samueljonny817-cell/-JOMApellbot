@@ -1,10 +1,16 @@
 import os
 import logging
 import asyncio
-from typing import Dict, List
+from typing import Dict, List, Optional
 from datetime import datetime
+import sys
 
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+# Check Python version
+if sys.version_info >= (3, 13):
+    print(f"⚠️ Warning: Python {sys.version_info.major}.{sys.version_info.minor} may have compatibility issues")
+    print("✅ Recommended: Use Python 3.11")
+
+from telegram import Update
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -21,7 +27,8 @@ load_dotenv()
 
 # Enable logging
 logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", 
+    level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
@@ -38,17 +45,17 @@ if not OPENAI_API_KEY:
 # Initialize OpenAI client
 openai_client = AsyncOpenAI(api_key=OPENAI_API_KEY)
 
-# Store conversation history per user (optional - for memory)
+# Store conversation history per user
 user_conversations: Dict[int, List[Dict[str, str]]] = {}
 
-# System prompt to define bot's personality
+# System prompt
 SYSTEM_PROMPT = """You are JOMApellBot, a helpful AI assistant created by JOMA Project. 
 You are friendly, knowledgeable, and always ready to help users with their questions.
 You provide clear, concise, and accurate information. 
 If you don't know something, be honest about it.
 Current date: {current_date}"""
 
-# Conversation states for /feedback command
+# Conversation states
 FEEDBACK_TEXT = 0
 
 
@@ -58,14 +65,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     welcome_message = f"""
 👋 Hello {user.first_name}! Welcome to JOMApellBot!
 
-I'm your AI assistant powered by advanced language models. You can chat with me about anything - I'm here to help!
+I'm your AI assistant powered by advanced language models. You can chat with me about anything!
 
 💡 **What I can do:**
 - Answer questions on any topic
 - Help with research and learning
 - Provide creative ideas
 - Assist with writing and editing
-- And much more!
 
 🚀 **Commands:**
 /start - Show this welcome message
@@ -120,16 +126,15 @@ async def about_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 - 24/7 availability
 - Natural conversation capabilities
 - Secure and private
-- Continuously improving
 
 **Technology Stack:**
-- Python 3.11+
-- python-telegram-bot v20+
+- Python 3.11
+- python-telegram-bot v20.8+
 - OpenAI API
 - Railway for hosting
 - GitHub for version control
 
-**Feedback:** Use /feedback to share your thoughts and help us improve!
+**Feedback:** Use /feedback to share your thoughts!
 
 Thank you for using JOMApellBot! 🌟
 """
@@ -161,8 +166,6 @@ async def feedback_receive(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     feedback_text = update.message.text
     user = update.effective_user
     
-    # Here you could save feedback to a database or send it to a channel
-    # For now, we'll just acknowledge it
     logger.info(f"Feedback from {user.id} ({user.username}): {feedback_text}")
     
     await update.message.reply_text(
@@ -180,44 +183,33 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 async def get_ai_response(user_message: str, user_id: int = None) -> str:
     """Get a response from the AI model."""
     try:
-        # Prepare messages for the AI
         messages = []
-        
-        # Add system prompt with current date
         system_msg = SYSTEM_PROMPT.format(
             current_date=datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         )
         messages.append({"role": "system", "content": system_msg})
         
-        # Add conversation history if available
         if user_id and user_id in user_conversations:
-            # Get last 10 messages for context (to stay within token limits)
             history = user_conversations[user_id][-10:]
             messages.extend(history)
         
-        # Add the current user message
         messages.append({"role": "user", "content": user_message})
         
-        # Call OpenAI API
         response = await openai_client.chat.completions.create(
-            model="gpt-3.5-turbo",  # Use "gpt-4" if you have access
+            model="gpt-3.5-turbo",
             messages=messages,
             max_tokens=1000,
             temperature=0.7,
-            presence_penalty=0.6,
-            frequency_penalty=0.3,
         )
         
         ai_response = response.choices[0].message.content
         
-        # Save to conversation history
         if user_id:
             if user_id not in user_conversations:
                 user_conversations[user_id] = []
             user_conversations[user_id].append({"role": "user", "content": user_message})
             user_conversations[user_id].append({"role": "assistant", "content": ai_response})
             
-            # Limit history to last 20 messages to prevent excessive token usage
             if len(user_conversations[user_id]) > 20:
                 user_conversations[user_id] = user_conversations[user_id][-20:]
         
@@ -229,17 +221,13 @@ async def get_ai_response(user_message: str, user_id: int = None) -> str:
 
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle any text message (not commands) and respond with AI."""
+    """Handle any text message and respond with AI."""
     user_message = update.message.text
     user_id = update.effective_user.id
     
-    # Show typing indicator
     await update.message.chat.send_action(action="typing")
-    
-    # Get AI response
     ai_response = await get_ai_response(user_message, user_id)
     
-    # Send response (split if too long)
     if len(ai_response) > 4096:
         for i in range(0, len(ai_response), 4096):
             await update.message.reply_text(ai_response[i:i+4096])
@@ -251,7 +239,6 @@ async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     """Log errors caused by updates."""
     logger.warning('Update "%s" caused error "%s"', update, context.error)
     
-    # Send error message to user if possible
     if update and update.effective_message:
         await update.effective_message.reply_text(
             "⚠️ An error occurred while processing your request. "
@@ -261,40 +248,49 @@ async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 def main() -> None:
     """Start the bot."""
-    # Create the Application
-    application = Application.builder().token(TELEGRAM_TOKEN).build()
+    try:
+        # Create the Application with specific configuration
+        application = (
+            Application.builder()
+            .token(TELEGRAM_TOKEN)
+            .build()
+        )
 
-    # Register command handlers
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("help", help_command))
-    application.add_handler(CommandHandler("about", about_command))
-    application.add_handler(CommandHandler("clear", clear_command))
-    
-    # Feedback conversation handler
-    feedback_conv = ConversationHandler(
-        entry_points=[CommandHandler("feedback", feedback_start)],
-        states={
-            FEEDBACK_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, feedback_receive)],
-        },
-        fallbacks=[CommandHandler("cancel", cancel)],
-    )
-    application.add_handler(feedback_conv)
-    
-    # Handle all text messages (but not commands)
-    application.add_handler(
-        MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message)
-    )
-    
-    # Register error handler
-    application.add_error_handler(error_handler)
+        # Register command handlers
+        application.add_handler(CommandHandler("start", start))
+        application.add_handler(CommandHandler("help", help_command))
+        application.add_handler(CommandHandler("about", about_command))
+        application.add_handler(CommandHandler("clear", clear_command))
+        
+        # Feedback conversation handler
+        feedback_conv = ConversationHandler(
+            entry_points=[CommandHandler("feedback", feedback_start)],
+            states={
+                FEEDBACK_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, feedback_receive)],
+            },
+            fallbacks=[CommandHandler("cancel", cancel)],
+        )
+        application.add_handler(feedback_conv)
+        
+        # Handle all text messages
+        application.add_handler(
+            MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message)
+        )
+        
+        application.add_error_handler(error_handler)
 
-    # Start the bot
-    print("🤖 JOMApellBot is starting...")
-    application.run_polling(
-        poll_interval=0.5,
-        timeout=30,
-        drop_pending_updates=True,
-    )
+        # Start the bot with polling
+        print("🤖 JOMApellBot is starting...")
+        print(f"✅ Using Python {sys.version}")
+        application.run_polling(
+            poll_interval=0.5,
+            timeout=30,
+            drop_pending_updates=True,
+        )
+        
+    except Exception as e:
+        logger.error(f"Failed to start bot: {e}")
+        raise
 
 
 if __name__ == "__main__":
